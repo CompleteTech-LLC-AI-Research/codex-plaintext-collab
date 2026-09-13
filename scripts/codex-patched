@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+#
+# Update-aware launcher for patched Codex.
+#
+# Before every launch it verifies that the managed Codex binary for the active
+# version is patched (rebuilding/reinstalling it after an update when needed),
+# then execs that binary. Point your shell alias or PATH entry for `codex` at
+# this script.
+#
+set -euo pipefail
+
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if ! "$SCRIPT_DIR/ensure-patched.sh" --codex-home "$CODEX_HOME" >&2; then
+  echo "warning: could not ensure a patched Codex; launching the installed binary." >&2
+fi
+
+REAL_BIN="$CODEX_HOME/packages/standalone/current/bin/codex"
+if [[ ! -x "$REAL_BIN" ]]; then
+  echo "error: managed Codex binary not found at $REAL_BIN" >&2
+  echo "Run Codex once so it installs its managed package, then retry." >&2
+  exit 127
+fi
+
+exec "$REAL_BIN" "$@"

@@ -1,0 +1,5 @@
+# Build cache and local artifacts
+.cache/
+bin/
+*.orig
+*.rej
