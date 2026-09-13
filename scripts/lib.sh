@@ -63,7 +63,18 @@ plaintext_resolve_release() {
 
   PLAINTEXT_RELEASE_DIR="$current"
   PLAINTEXT_VERSION="$version"
-  PLAINTEXT_BIN="$current/bin/codex"
+
+  local entrypoint="bin/codex"
+  if [[ -f "$current/codex-package.json" ]] && command -v python3 >/dev/null 2>&1; then
+    entrypoint="$(python3 -c 'import json,sys
+try:
+    print(json.load(open(sys.argv[1])).get("entrypoint") or "bin/codex")
+except Exception:
+    print("bin/codex")' "$current/codex-package.json")"
+  fi
+  [[ -n "$entrypoint" ]] || entrypoint="bin/codex"
+
+  PLAINTEXT_BIN="$current/$entrypoint"
   PLAINTEXT_MARKER="$current/$PLAINTEXT_MARKER_NAME"
   return 0
 }

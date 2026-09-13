@@ -128,6 +128,44 @@ tests/run.sh
 
 Runs the tooling against a fake managed install and fake build cache.
 
+## Future Codex versions
+
+The tooling is built to keep working across upstream releases, with a
+fail-closed boundary around the one thing that can genuinely change.
+
+Version-agnostic by design:
+
+- The active version and binary path are read from the release manifest
+  (`codex-package.json`, including its `entrypoint`), not hardcoded.
+- Patched builds are cached and keyed by upstream version, so a new version
+  builds once and reinstalls instantly thereafter.
+- The marker is keyed by the patch hash, so any change to the patch forces a
+  rebuild/reinstall rather than silently reusing a stale binary.
+- The update hook verifies on every session and repairs from cache.
+
+Source patch application (`scripts/apply-patch.py`):
+
+- Applies the change **semantically** — removes `.with_encrypted()` calls from
+  the collaboration tool spec and rewrites the `direct_source()` encrypted-args
+  condition — so line-number and formatting drift across versions do not matter.
+- Falls back to the bundled unified diff (`git apply`, then `--3way`) if the
+  semantic transform does not fully apply.
+- Verifies the result and exits non-zero if the collaboration code was
+  refactored in a way it does not recognize, with a message telling you to
+  update the patch.
+
+The remaining assumptions, which would require a patch update if they ever
+change:
+
+- Release tags are named `rust-vX.Y.Z`.
+- The collaboration `message` parameters are still what triggers encryption, and
+  the `DirectPlaintextMessage` distinction still exists.
+- `bin/codex` (or the manifest `entrypoint`) is the binary to replace.
+
+In short: the install/update/verify/uninstall plumbing is dynamic; the code
+patch auto-adapts to drift but is expected to be re-validated (and occasionally
+tweaked) when upstream reworks multi-agent collaboration.
+
 ## Limitations
 
 - Existing `gAAAAA...` messages remain encrypted; the key is server-side.

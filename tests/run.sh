@@ -87,6 +87,51 @@ check "hook repairs from cache, exits 0" 0 bash -c "CODEX_PLAINTEXT_CACHE='$CACH
 check "verify passes after hook repair" 0 "$SCRIPTS/verify-patched.sh" --quiet --codex-home "$HOME_DIR"
 check "hook without cache still exits 0" 0 bash -c "CODEX_PLAINTEXT_CACHE='$WORK/empty' '$SCRIPTS/hook-verify.sh' --codex-home '$HOME_DIR' </dev/null"
 
+echo "== semantic patcher =="
+SRC="$WORK/src"
+mkdir -p "$SRC/codex-rs/core/src/tools/handlers"
+cat > "$SRC/codex-rs/core/src/tools/handlers/multi_agents_spec.rs" <<'RS'
+fn make() {
+    let properties = BTreeMap::from([
+        (
+            "message".to_string(),
+            JsonSchema::string(Some(
+                "Message text to queue on the target agent.".to_string(),
+            ))
+            .with_encrypted(),
+        ),
+    ]);
+}
+RS
+cat > "$SRC/codex-rs/core/src/tools/router.rs" <<'RS'
+impl ToolCall {
+    pub(crate) fn direct_source(&self) -> ToolCallSource {
+        if self.tool_name.namespace.as_deref() == Some("collaboration")
+            && self
+                .encrypted_function_args
+                .as_ref()
+                .is_some_and(Vec::is_empty)
+        {
+            ToolCallSource::DirectPlaintextMessage
+        } else {
+            ToolCallSource::Direct
+        }
+    }
+}
+RS
+check "semantic apply succeeds" 0 python3 "$SCRIPTS/apply-patch.py" "$SRC"
+check "semantic apply idempotent" 0 python3 "$SCRIPTS/apply-patch.py" "$SRC"
+check "with_encrypted removed" 1 grep -q 'with_encrypted' "$SRC/codex-rs/core/src/tools/handlers/multi_agents_spec.rs"
+check "router plaintext classification added" 0 grep -q 'map_or(true, |args| args.is_empty())' "$SRC/codex-rs/core/src/tools/router.rs"
+
+REFACTOR="$WORK/refactor"
+mkdir -p "$REFACTOR/codex-rs/core/src/tools/handlers"
+printf 'fn make() {\n    let x = JsonSchema::string(Some(\n        "m".to_string(),\n    ))\n    .with_encrypted();\n}\n' \
+  > "$REFACTOR/codex-rs/core/src/tools/handlers/multi_agents_spec.rs"
+printf 'fn direct_source() {\n    let _ = self.encrypted_function_args.rewritten_api();\n}\n' \
+  > "$REFACTOR/codex-rs/core/src/tools/router.rs"
+check "semantic patcher fails closed on refactor" 1 python3 "$SCRIPTS/apply-patch.py" "$REFACTOR"
+
 echo
 echo "passed: $PASS, failed: $FAIL"
 [[ "$FAIL" -eq 0 ]]

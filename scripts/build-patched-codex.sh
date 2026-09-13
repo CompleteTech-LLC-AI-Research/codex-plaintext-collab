@@ -16,12 +16,15 @@ FORCE=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PATCH_FILE="$REPO_ROOT/patches/0001-disable-collab-message-encryption.patch"
+# shellcheck source=lib.sh
+source "$SCRIPT_DIR/lib.sh"
 
 usage() {
   cat <<'EOF'
 Usage: build-patched-codex.sh [--version X.Y.Z] [--jobs N] [--cache-dir DIR] [--force]
 
-  --version X.Y.Z   Upstream Codex version to build (default: detect from `codex --version`)
+  --version X.Y.Z   Upstream Codex version to build (default: detect from the
+                     installed managed Codex release)
   --jobs N          Pass -j N to cargo
   --cache-dir DIR   Override the source/binary cache directory
   --force           Rebuild even if a cached patched binary exists
@@ -42,17 +45,17 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-for tool in git cargo rustc; do
+for tool in git cargo rustc python3; do
   command -v "$tool" >/dev/null 2>&1 || { echo "error: missing required tool: $tool" >&2; exit 1; }
 done
 
 if [[ -z "$VERSION" ]]; then
-  if command -v codex >/dev/null 2>&1; then
-    VERSION="$(codex --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
+  if plaintext_resolve_release "${CODEX_HOME:-$HOME/.codex}" 2>/dev/null; then
+    VERSION="$PLAINTEXT_VERSION"
   fi
 fi
 if [[ -z "$VERSION" ]]; then
-  echo "error: could not determine Codex version; pass --version X.Y.Z" >&2
+  echo "error: could not determine Codex version from the managed install; pass --version X.Y.Z" >&2
   exit 2
 fi
 
@@ -78,28 +81,17 @@ fi
 
 echo "Fetching $TAG ..." >&2
 if ! git -C "$SRC_DIR" fetch --depth 1 origin "refs/tags/$TAG:refs/tags/$TAG"; then
-  git -C "$SRC_DIR" fetch --tags origin
+  if ! git -C "$SRC_DIR" fetch --tags origin; then
+    echo "error: upstream tag '$TAG' not found. Available recent tags:" >&2
+    git -C "$SRC_DIR" tag --list 'rust-v*' | sort -V | tail -n10 >&2 || true
+    exit 1
+  fi
 fi
 git -C "$SRC_DIR" checkout -f "$TAG"
 git -C "$SRC_DIR" clean -fdx -e codex-rs/target
 
-if git -C "$SRC_DIR" apply --reverse --check "$PATCH_FILE" >/dev/null 2>&1; then
-  echo "Patch already applied." >&2
-else
-  echo "Applying $(basename "$PATCH_FILE") ..." >&2
-  git -C "$SRC_DIR" apply "$PATCH_FILE"
-fi
-
-spec_file="$SRC_DIR/codex-rs/core/src/tools/handlers/multi_agents_spec.rs"
-router_file="$SRC_DIR/codex-rs/core/src/tools/router.rs"
-if grep -q '\.with_encrypted()' "$spec_file"; then
-  echo "error: patch incomplete: with_encrypted markers remain in multi_agents_spec.rs" >&2
-  exit 1
-fi
-if ! grep -q 'map_or(true, |args| args.is_empty())' "$router_file"; then
-  echo "error: patch incomplete: plaintext classification missing in router.rs" >&2
-  exit 1
-fi
+echo "Applying patch semantically (falls back to bundled diff) ..." >&2
+python3 "$SCRIPT_DIR/apply-patch.py" "$SRC_DIR" --patch "$PATCH_FILE"
 
 build_args=(build --release --locked -p codex-cli --bin codex
   --manifest-path "$SRC_DIR/codex-rs/Cargo.toml")
