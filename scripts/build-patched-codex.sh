@@ -12,6 +12,7 @@ CACHE_DIR="${CODEX_PLAINTEXT_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/codex-plaint
 VERSION=""
 JOBS=""
 FORCE=0
+LOCKED=1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -28,6 +29,7 @@ Usage: build-patched-codex.sh [--version X.Y.Z] [--jobs N] [--cache-dir DIR] [--
   --jobs N          Pass -j N to cargo
   --cache-dir DIR   Override the source/binary cache directory
   --force           Rebuild even if a cached patched binary exists
+  --no-locked       Build without --locked (skip the lockfile-pinned attempt)
   -h, --help        Show this help
 
 On success the path to the patched binary is printed on the last line of stdout.
@@ -40,6 +42,7 @@ while [[ $# -gt 0 ]]; do
     --jobs|-j) JOBS="${2:-}"; shift 2 ;;
     --cache-dir) CACHE_DIR="${2:-}"; shift 2 ;;
     --force) FORCE=1; shift ;;
+    --no-locked) LOCKED=0; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "error: unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -93,15 +96,46 @@ git -C "$SRC_DIR" clean -fdx -e codex-rs/target
 echo "Applying patch semantically (falls back to bundled diff) ..." >&2
 python3 "$SCRIPT_DIR/apply-patch.py" "$SRC_DIR" --patch "$PATCH_FILE"
 
-build_args=(build --release --locked -p codex-cli --bin codex
+# Some dependencies link native-tls/openssl. When the system has no OpenSSL
+# development files, force the vendored build so the compile can proceed.
+openssl_available() {
+  if pkg-config --exists openssl 2>/dev/null; then
+    return 0
+  fi
+  [[ -n "${OPENSSL_DIR:-}" && -f "$OPENSSL_DIR/include/openssl/ssl.h" ]]
+}
+if ! openssl_available; then
+  cli_cargo="$SRC_DIR/codex-rs/cli/Cargo.toml"
+  if [[ -f "$cli_cargo" ]] && ! grep -q '^\[dependencies\.openssl\]' "$cli_cargo"; then
+    echo "No system OpenSSL development files; enabling vendored OpenSSL." >&2
+    printf '\n[dependencies.openssl]\nversion = "0.10"\nfeatures = ["vendored"]\n' >> "$cli_cargo"
+  fi
+fi
+
+build_args=(build --release -p codex-cli --bin codex
   --manifest-path "$SRC_DIR/codex-rs/Cargo.toml")
 if [[ -n "$JOBS" ]]; then
   build_args+=(-j "$JOBS")
 fi
 
 echo "Building patched Codex $VERSION ($TARGET_TRIPLE) ..." >&2
-cargo "${build_args[@]}"
+if [[ "$LOCKED" -eq 1 ]]; then
+  if cargo "${build_args[@]}" --locked; then
+    :
+  else
+    echo "warning: locked build failed (likely Cargo.lock drift); retrying without --locked" >&2
+    cargo "${build_args[@]}"
+  fi
+else
+  cargo "${build_args[@]}"
+fi
 
 install -m 0755 "$SRC_DIR/codex-rs/target/release/codex" "$OUT_BIN"
+
+# Upstream keeps debug info in release builds and strips during packaging.
+if command -v strip >/dev/null 2>&1; then
+  strip "$OUT_BIN" 2>/dev/null || true
+fi
+
 echo "Built patched Codex $VERSION: $OUT_BIN" >&2
 echo "$OUT_BIN"

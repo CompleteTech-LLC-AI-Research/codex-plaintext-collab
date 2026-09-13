@@ -66,6 +66,17 @@ scripts/build-patched-codex.sh --version 0.154.0
 The binary is cached at
 `${CODEX_PLAINTEXT_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/codex-plaintext-collab}/bin/codex-<version>`.
 
+Build notes:
+
+- Requires `git`, `cargo`/`rustc` (the repo's pinned toolchain is installed by
+  rustup if needed), `python3`, and a C toolchain.
+- If the system has no OpenSSL development files, the script automatically
+  enables the vendored OpenSSL build (needs `cc`, `make`, and `perl`).
+- If the pinned `--locked` build fails due to `Cargo.lock` drift, it retries
+  without `--locked`; pass `--no-locked` to skip the pinned attempt.
+- The release binary is stripped after building to match upstream packaging
+  (upstream ships unstripped release artifacts).
+
 ## Install and survive updates
 
 Codex replaces its native binary when it updates, which would discard a
