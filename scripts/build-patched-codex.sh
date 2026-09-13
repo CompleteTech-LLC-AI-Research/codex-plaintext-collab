@@ -90,6 +90,17 @@ else
   git -C "$SRC_DIR" apply "$PATCH_FILE"
 fi
 
+spec_file="$SRC_DIR/codex-rs/core/src/tools/handlers/multi_agents_spec.rs"
+router_file="$SRC_DIR/codex-rs/core/src/tools/router.rs"
+if grep -q '\.with_encrypted()' "$spec_file"; then
+  echo "error: patch incomplete: with_encrypted markers remain in multi_agents_spec.rs" >&2
+  exit 1
+fi
+if ! grep -q 'map_or(true, |args| args.is_empty())' "$router_file"; then
+  echo "error: patch incomplete: plaintext classification missing in router.rs" >&2
+  exit 1
+fi
+
 build_args=(build --release --locked -p codex-cli --bin codex
   --manifest-path "$SRC_DIR/codex-rs/Cargo.toml")
 if [[ -n "$JOBS" ]]; then

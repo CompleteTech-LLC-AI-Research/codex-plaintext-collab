@@ -12,7 +12,7 @@ set -euo pipefail
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if ! "$SCRIPT_DIR/ensure-patched.sh" --codex-home "$CODEX_HOME" >&2; then
+if ! "$SCRIPT_DIR/ensure-patched.sh" --quiet --codex-home "$CODEX_HOME"; then
   echo "warning: could not ensure a patched Codex; launching the installed binary." >&2
 fi
 

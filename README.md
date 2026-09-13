@@ -69,30 +69,64 @@ The binary is cached at
 ## Install and survive updates
 
 Codex replaces its native binary when it updates, which would discard a
-one-off patch. Two scripts handle that:
+one-off patch. The tooling below detects and repairs that automatically.
 
 ```bash
-# Patch the managed install for the active CODEX_HOME (idempotent).
+# Patch the managed install for the active CODEX_HOME (idempotent; builds if needed).
 scripts/ensure-patched.sh --codex-home "$HOME/.codex"
 
-# Update-aware launcher: re-applies the patch if an update replaced the binary,
-# then execs Codex.
+# Verify only (read-only, hash based). Exit 0 = patched, 1 = not patched, 3 = no install.
+scripts/verify-patched.sh --codex-home "$HOME/.codex"
+
+# Update-aware launcher: verifies/repairs, then execs Codex.
 scripts/install.sh          # links ~/.local/bin/codex-plaintext -> scripts/codex-patched
 codex-plaintext --version
 ```
 
-Recommended setup:
+### Verification is hash based
 
-1. Point your Codex entrypoint at `codex-patched` (alias or PATH), **or** run
-   `ensure-patched.sh` from a shell hook/after-update step.
-2. `ensure-patched.sh` detects the active version, rebuilds the patched binary
-   for that version if it is not cached, backs up the original once as
-   `bin/codex.orig`, and atomically swaps in the patched binary.
-3. After a Codex update, the next launch rebuilds/reinstalls for the new version
-   so normal `codex update` flows keep working.
+`ensure-patched.sh` records `version:patch_sha256:binary_sha256` next to the
+release. `verify-patched.sh` fails if the version changed (an update landed), if
+the patch file changed, or if `bin/codex` is no longer the exact patched build.
 
-For fully hands-off updates, wire `ensure-patched.sh` into a shell `PROMPT_COMMAND`
-or a small timer that runs it before launching Codex.
+### On-update trigger (Codex SessionStart hook)
+
+Register a hook that verifies on every session start and reinstalls instantly
+from the local build cache when an update was applied:
+
+```bash
+scripts/install-hook.sh --codex-home "$HOME/.codex"
+# optional: allow a detached background rebuild when no cached build exists yet
+scripts/install-hook.sh --codex-home "$HOME/.codex" --auto-build
+```
+
+The hook never blocks or fails a session. If a patched build for the new version
+is not cached yet, it prints one actionable line (or starts a background build
+with `--auto-build`). Note that Codex may ask you to trust a newly added hook;
+the installer prints the expected `hooks.state` key. Remove it with
+`scripts/remove-hook.sh`.
+
+If you launch Codex through `codex-patched`, the hook is optional: the launcher
+already verifies and repairs before every run. The hook is what catches updates
+when you invoke Codex through another entrypoint.
+
+### Uninstall
+
+```bash
+# Restore the original binary, drop the marker, remove the hook.
+scripts/uninstall.sh --codex-home "$HOME/.codex"
+
+# Also clean every release and remove the wrapper/cache:
+scripts/uninstall.sh --codex-home "$HOME/.codex" --all --remove-wrapper --purge-cache
+```
+
+### Tests
+
+```bash
+tests/run.sh
+```
+
+Runs the tooling against a fake managed install and fake build cache.
 
 ## Limitations
 
