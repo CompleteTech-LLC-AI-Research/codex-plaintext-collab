@@ -5,7 +5,8 @@ Two strategies are used, in order:
 
 1. Semantic transform: remove ``.with_encrypted()`` calls from the collaboration
    tool spec and treat empty/absent ``encrypted_function_args`` as plaintext in
-   the tool router. This survives line-number and formatting drift.
+   the tool router, and update the tool-schema unit tests that assert the
+   encrypted marker. This survives line-number and formatting drift.
 2. Bundled unified diff (``patches/0001-...patch``) via ``git apply``.
 
 The result is verified afterwards; the script exits non-zero when the checkout
@@ -22,11 +23,28 @@ import subprocess
 import sys
 
 SPEC_REL = "codex-rs/core/src/tools/handlers/multi_agents_spec.rs"
+TESTS_REL = "codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs"
 ROUTER_REL = "codex-rs/core/src/tools/router.rs"
 
 ENCRYPTED_CALL_RE = re.compile(r"[ \t]*\n[ \t]*\.with_encrypted\(\)")
 ROUTER_ENCRYPTED_RE = ".is_some_and(Vec::is_empty)"
 ROUTER_PLAINTEXT = ".map_or(true, |args| args.is_empty())"
+# The tool-schema unit tests assert the encrypted marker on the collaboration
+# `message` parameter. Removing the marker makes those assertions stale, so the
+# transform carries them along; otherwise the patched tree fails `cargo test`.
+TESTS_ENCRYPTED_ASSERTION_RE = re.compile(
+    r"(\.and_then\(\|schema\| schema\.encrypted\),\n)([ \t]*)Some\(true\)"
+)
+# Verification is deliberately looser than the rewrite: any assertion that still
+# expects an encrypted value next to `schema.encrypted` means the checkout is
+# not in the expected state, even if upstream reshaped the assertion.
+TESTS_STALE_ASSERTION_RE = re.compile(r"schema\.encrypted[\s\S]{0,40}?Some\(true\)")
+TESTS_PLAINTEXT_NOTE = "collaboration messages must not advertise an encrypted parameter"
+
+
+def _plaintext_assertion(match: re.Match[str]) -> str:
+    indent = match.group(2)
+    return f'{match.group(1)}{indent}None,\n{indent}"{TESTS_PLAINTEXT_NOTE}"'
 
 
 def semantic_transform(root: pathlib.Path) -> bool:
@@ -46,6 +64,16 @@ def semantic_transform(root: pathlib.Path) -> bool:
         updated = text.replace(ROUTER_ENCRYPTED_RE, ROUTER_PLAINTEXT)
         if updated != text:
             router.write_text(updated, encoding="utf-8")
+            changed = True
+
+    tests = root / TESTS_REL
+    if tests.is_file():
+        text = tests.read_text(encoding="utf-8")
+        updated, replaced = TESTS_ENCRYPTED_ASSERTION_RE.subn(
+            _plaintext_assertion, text
+        )
+        if replaced:
+            tests.write_text(updated, encoding="utf-8")
             changed = True
 
     return changed
@@ -73,6 +101,15 @@ def verify(root: pathlib.Path) -> list[str]:
                     f"{ROUTER_REL}: plaintext classification missing "
                     "(upstream direct_source may have changed)"
                 )
+
+    tests = root / TESTS_REL
+    if not tests.is_file():
+        problems.append(f"missing {TESTS_REL}")
+    elif TESTS_STALE_ASSERTION_RE.search(tests.read_text(encoding="utf-8")):
+        problems.append(
+            f"{TESTS_REL}: tool-schema tests still assert an encrypted "
+            "collaboration message"
+        )
 
     return problems
 
