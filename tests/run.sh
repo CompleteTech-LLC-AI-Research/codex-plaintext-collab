@@ -119,10 +119,44 @@ impl ToolCall {
     }
 }
 RS
+cat > "$SRC/codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs" <<'RS'
+#[test]
+fn send_message_tool_requires_message_and_has_no_output_schema() {
+    assert_eq!(
+        properties
+            .get("message")
+            .and_then(|schema| schema.encrypted),
+        Some(true)
+    );
+}
+
+#[test]
+fn spawn_agent_tool_v1_keeps_its_own_expectation() {
+    assert_eq!(
+        properties
+            .get("message")
+            .and_then(|schema| schema.encrypted),
+        None
+    );
+}
+RS
 check "semantic apply succeeds" 0 python3 "$SCRIPTS/apply-patch.py" "$SRC"
 check "semantic apply idempotent" 0 python3 "$SCRIPTS/apply-patch.py" "$SRC"
 check "with_encrypted removed" 1 grep -q 'with_encrypted' "$SRC/codex-rs/core/src/tools/handlers/multi_agents_spec.rs"
 check "router plaintext classification added" 0 grep -q 'map_or(true, |args| args.is_empty())' "$SRC/codex-rs/core/src/tools/router.rs"
+check "schema tests no longer assert an encrypted message" 1 grep -q 'Some(true)' "$SRC/codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs"
+check "schema tests explain the plaintext expectation" 0 grep -q 'must not advertise an encrypted parameter' "$SRC/codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs"
+check "unrelated None expectation preserved" 0 grep -q 'spawn_agent_tool_v1_keeps_its_own_expectation' "$SRC/codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs"
+
+STALE_TESTS="$WORK/stale-tests"
+mkdir -p "$STALE_TESTS/codex-rs/core/src/tools/handlers"
+printf 'impl ToolCall {\n    pub(crate) fn direct_source(&self) -> ToolCallSource {\n        if self\n            .encrypted_function_args\n            .as_ref()\n            .is_some_and(Vec::is_empty)\n        {\n            ToolCallSource::DirectPlaintextMessage\n        } else {\n            ToolCallSource::Direct\n        }\n    }\n}\n' \
+  > "$STALE_TESTS/codex-rs/core/src/tools/router.rs"
+printf 'fn spec() {\n    let x = JsonSchema::string(Some(\n        "m".to_string(),\n    ))\n    .with_encrypted();\n}\n' \
+  > "$STALE_TESTS/codex-rs/core/src/tools/handlers/multi_agents_spec.rs"
+printf '#[test]\nfn rewritten() {\n    assert_eq!(schema.encrypted, Some(true));\n}\n' \
+  > "$STALE_TESTS/codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs"
+check "semantic patcher fails closed on reshaped schema test" 1 python3 "$SCRIPTS/apply-patch.py" "$STALE_TESTS"
 
 REFACTOR="$WORK/refactor"
 mkdir -p "$REFACTOR/codex-rs/core/src/tools/handlers"

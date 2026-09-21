@@ -44,6 +44,11 @@ Notes:
    collaboration calls whose `encrypted_function_args` are empty **or absent**
    are treated as `DirectPlaintextMessage`. This makes Codex render/store the
    message as plaintext instead of wrapping it as `encrypted_content`.
+3. Updates the three tool-schema unit tests in
+   `codex-rs/core/src/tools/handlers/multi_agents_spec_tests.rs` that assert
+   `message.encrypted == Some(true)`, so a patched checkout still builds *and*
+   passes `cargo test -p codex-core`. Without this the patch silently leaves the
+   host's own test suite red.
 
 The result: `spawn_agent`/`send_message`/`followup_task` arguments and the
 recipient agent's `agent_message` contain readable text.
