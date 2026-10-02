@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/banner.jpg" alt="An encrypted violet capsule cracked open, releasing amber plaintext message streams that flow between agent nodes across an observatory night sky." width="100%"></p>
+
 # codex-plaintext-collab
 
 A small patch (and build/update tooling) that stops **OpenAI Codex CLI** from
